@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "skill",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

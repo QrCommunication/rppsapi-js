@@ -895,3 +895,23 @@ npm run lint        # Verifie le typage (tsc --noEmit)
 - Sources individuelles exportees pour usage avance
 - Utilitaire `validateRpps`
 - Zero dependance, TypeScript natif, ESM
+
+## Skill AI (Claude Code, Cursor, Codex, Windsurf, Gemini...)
+
+Ce SDK inclut un **skill AI** qui donne a votre agent une connaissance complete du SDK : API, types, sources de donnees, configuration, exemples.
+
+### Installation automatique
+
+Le script detecte les agents AI installes et installe le skill automatiquement :
+
+```bash
+bash node_modules/@qrcommunication/rppsapi/skill/install.sh
+```
+
+Agents supportes : Claude Code, Cursor, Codex, Windsurf, Cline, Aider, Gemini CLI.
+
+### Installation manuelle
+
+```bash
+cp -r node_modules/@qrcommunication/rppsapi/skill ~/.claude/skills/sdk-rpps
+```
