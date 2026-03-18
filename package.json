@@ -19,13 +19,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rony/sdk-gouv-rpps.git"
+    "url": "git+https://github.com/QrCommunication/rppsapi-js.git"
   },
-  "homepage": "https://github.com/rony/sdk-gouv-rpps#readme",
+  "homepage": "https://github.com/QrCommunication/rppsapi-js#readme",
   "bugs": {
-    "url": "https://github.com/rony/sdk-gouv-rpps/issues"
+    "url": "https://github.com/QrCommunication/rppsapi-js/issues"
   },
-  "author": "rony",
+  "author": "QrCommunication",
   "sideEffects": false,
   "scripts": {
     "build": "tsc",
@@ -53,7 +53,7 @@
     "sante",
     "praticien"
   ],
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "engines": {
     "node": ">=18.0.0"
   },

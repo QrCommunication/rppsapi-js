@@ -1,7 +1,7 @@
 # @qrcommunication/rppsapi
 
 [![npm version](https://img.shields.io/npm/v/@qrcommunication/rppsapi.svg)](https://www.npmjs.com/package/@qrcommunication/rppsapi)
-[![license](https://img.shields.io/npm/l/@qrcommunication/rppsapi.svg)](https://github.com/your-org/@qrcommunication/rppsapi/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/@qrcommunication/rppsapi.svg)](https://github.com/QrCommunication/rppsapi-js/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/@qrcommunication/rppsapi.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@qrcommunication/rppsapi)](https://bundlephobia.com/package/@qrcommunication/rppsapi)
@@ -833,7 +833,7 @@ Le SDK utilise l'API `fetch` native de Node.js (disponible depuis Node 18) et ne
 
 ## Licence
 
-MIT -- Voir le fichier [LICENSE](./LICENSE) pour les details.
+PolyForm Noncommercial 1.0.0 -- Voir le fichier [LICENSE](./LICENSE) pour les details.
 
 ---
 
