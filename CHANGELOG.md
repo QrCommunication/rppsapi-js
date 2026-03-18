@@ -4,6 +4,14 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.0.1] - 2026-03-18
+
+### Corrige
+
+- URLs repository/homepage/bugs corrigees vers QrCommunication/rppsapi-js
+- Licence corrigee : MIT → PolyForm Noncommercial 1.0.0
+- Auteur : QrCommunication
+
 ## [1.0.0] - 2026-03-18
 
 ### Ajouté
