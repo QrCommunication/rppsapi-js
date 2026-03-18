@@ -1,0 +1,65 @@
+{
+  "name": "@qrcommunication/rppsapi",
+  "version": "1.0.0",
+  "description": "SDK pour interroger toutes les sources de données RPPS (Répertoire Partagé des Professionnels de Santé) de l'Annuaire Santé - ANS",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rony/sdk-gouv-rpps.git"
+  },
+  "homepage": "https://github.com/rony/sdk-gouv-rpps#readme",
+  "bugs": {
+    "url": "https://github.com/rony/sdk-gouv-rpps/issues"
+  },
+  "author": "rony",
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "rpps",
+    "annuaire-sante",
+    "ans",
+    "fhir",
+    "hl7",
+    "professionnel-sante",
+    "data-gouv",
+    "france",
+    "healthcare",
+    "medecin",
+    "pharmacien",
+    "infirmier",
+    "cps",
+    "mssante",
+    "sante",
+    "praticien"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

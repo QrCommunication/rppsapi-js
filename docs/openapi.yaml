@@ -1,0 +1,1065 @@
+openapi: 3.1.0
+
+info:
+  title: SDK RPPS — APIs sous-jacentes
+  version: 1.0.0
+  description: |
+    Documentation des APIs publiques interrogées par le SDK @qrcommunication/rppsapi.
+
+    Ce SDK agrège les données provenant de deux sources principales :
+    - **API FHIR Annuaire Santé** : données consolidées des professionnels
+    - **API Tabular data.gouv.fr** : données complémentaires (diplômes, savoir-faire, CPS, MSSanté)
+  contact:
+    name: Agence du Numérique en Santé (ANS)
+    url: https://www.esante.gouv.fr
+    email: api@esante.gouv.fr
+  license:
+    name: Licence Ouverte v2.0
+    url: https://www.etalab.gouv.fr/licence-ouverte-open-licence
+
+servers:
+  - url: https://gateway.api.esante.gouv.fr/fhir/v2
+    description: API FHIR Annuaire Santé (production)
+    variables: {}
+  - url: https://tabular-api.data.gouv.fr/api/resources
+    description: API Tabular data.gouv.fr (production)
+    variables: {}
+
+# ─────────────────────────────────────────────────────────────
+# TAGS
+# ─────────────────────────────────────────────────────────────
+
+tags:
+  - name: FHIR Practitioner
+    description: Recherche et récupération de professionnels (Practitioner FHIR)
+  - name: FHIR PractitionerRole
+    description: Rôles et spécialités des professionnels (PractitionerRole FHIR)
+  - name: FHIR Metadata
+    description: Métadonnées et capacités du serveur FHIR
+  - name: Tabular Data
+    description: Interrogation des données structurées via l'API Tabular
+  - name: Resources
+    description: Référence des ressources Tabular utilisées
+
+# ─────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────
+
+paths:
+  /Practitioner:
+    get:
+      operationId: searchPractitioners
+      tags:
+        - FHIR Practitioner
+      summary: Rechercher des praticiens
+      description: |
+        Recherche des praticiens (médecins, dentistes, infirmiers, etc.) par identifiant, nom ou prénom.
+
+        **Authentification requise** : Header `ESANTE-API-KEY`
+
+        **Note** : Le SDK RPPS utilise principalement l'identifiant RPPS pour cibler rapidement
+        un praticien via le système FHIR.
+      parameters:
+        - name: ESANTE-API-KEY
+          in: header
+          required: true
+          description: Clé API d'authentification FHIR
+          schema:
+            type: string
+            example: "your-api-key-here"
+        - name: identifier
+          in: query
+          required: false
+          description: Identifiant du praticien (RPPS, ADELI, etc.) — correspondance exacte
+          schema:
+            type: string
+            example: "11111111111"
+        - name: name
+          in: query
+          required: false
+          description: Nom du praticien (recherche partielle)
+          schema:
+            type: string
+            example: "Dupont"
+        - name: family
+          in: query
+          required: false
+          description: Nom de famille (recherche partielle)
+          schema:
+            type: string
+            example: "Dupont"
+        - name: given
+          in: query
+          required: false
+          description: Prénom (recherche partielle)
+          schema:
+            type: string
+            example: "Jean"
+        - name: _count
+          in: query
+          required: false
+          description: Nombre max de résultats à retourner (défaut : 10, max : 100)
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Bundle FHIR contenant les praticiens trouvés
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirBundle_Practitioner"
+              examples:
+                success:
+                  summary: Réponse avec 1 praticien trouvé
+                  value:
+                    resourceType: Bundle
+                    type: searchset
+                    total: 1
+                    entry:
+                      - fullUrl: https://gateway.api.esante.gouv.fr/fhir/v2/Practitioner/id-123
+                        resource:
+                          resourceType: Practitioner
+                          id: id-123
+                          identifier:
+                            - system: https://rpps.esante.gouv.fr
+                              value: "11111111111"
+                          active: true
+                          name:
+                            - family: Dupont
+                              given:
+                                - Jean
+                              use: official
+                          telecom:
+                            - system: phone
+                              value: "0123456789"
+                            - system: email
+                              value: "j.dupont@example.fr"
+        "400":
+          description: Paramètres invalides
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+        "401":
+          description: Authentification échouée (clé API invalide ou manquante)
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+        "429":
+          description: Limite de requêtes dépassée
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+        "503":
+          description: Service indisponible
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+
+  /PractitionerRole:
+    get:
+      operationId: searchPractitionerRoles
+      tags:
+        - FHIR PractitionerRole
+      summary: Rechercher les rôles et spécialités d'un praticien
+      description: |
+        Recherche les rôles professionnels et spécialités d'un praticien.
+
+        **Authentification requise** : Header `ESANTE-API-KEY`
+
+        **Cas d'usage** : Récupérer les structures d'exercice, spécialités, et détails de pratique.
+      parameters:
+        - name: ESANTE-API-KEY
+          in: header
+          required: true
+          description: Clé API d'authentification FHIR
+          schema:
+            type: string
+        - name: practitioner
+          in: query
+          required: false
+          description: Référence au praticien (ex: Practitioner/id-123)
+          schema:
+            type: string
+            example: "Practitioner/id-123"
+        - name: organization
+          in: query
+          required: false
+          description: Référence à l'organisation/structure (ex: Organization/org-456)
+          schema:
+            type: string
+        - name: specialty
+          in: query
+          required: false
+          description: Code de spécialité (recherche partielle)
+          schema:
+            type: string
+            example: "SM54"
+        - name: _count
+          in: query
+          required: false
+          description: Nombre max de résultats
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Bundle FHIR contenant les rôles trouvés
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirBundle_PractitionerRole"
+        "401":
+          description: Authentification échouée
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+        "429":
+          description: Limite de requêtes dépassée
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+
+  /metadata:
+    get:
+      operationId: getCapabilityStatement
+      tags:
+        - FHIR Metadata
+      summary: Récupérer les capacités du serveur FHIR
+      description: |
+        Endpoint standard FHIR qui retourne un CapabilityStatement.
+        Utile pour connaître les ressources supportées et les paramètres de recherche disponibles.
+      parameters:
+        - name: ESANTE-API-KEY
+          in: header
+          required: true
+          description: Clé API d'authentification FHIR
+          schema:
+            type: string
+      responses:
+        "200":
+          description: CapabilityStatement FHIR
+          content:
+            application/fhir+json:
+              schema:
+                type: object
+                description: FHIR CapabilityStatement
+        "401":
+          description: Authentification échouée
+          content:
+            application/fhir+json:
+              schema:
+                $ref: "#/components/schemas/FhirOperationOutcome"
+
+  /{resource_id}/data/:
+    get:
+      operationId: queryTabularData
+      tags:
+        - Tabular Data
+      summary: Interroger une ressource Tabular
+      description: |
+        API générique pour interroger les données structurées de data.gouv.fr.
+
+        Supporte le filtrage multi-colonnes avec opérateurs `__exact` et `__contains`,
+        et la pagination.
+
+        **Ressources principales utilisées par le SDK RPPS** :
+        - `fffda7e9-0ea2-4c35-bba0-4496f3af935d` : Données personne + activité
+        - `41ae70ac-90c8-4c4e-8644-4ef1b100f045` : Diplômes et autorisations
+        - `fb55f15f-bd61-4402-b551-51ef387f2fab` : Savoir-faire
+        - `210eb05e-564b-42be-994a-d1800b63e9b7` : Cartes CPS / CPF
+        - `afe01105-d9a1-41fe-921f-e40ea48b2ba6` : Messagerie MSSanté
+      parameters:
+        - name: resource_id
+          in: path
+          required: true
+          description: Identifiant de la ressource Tabular
+          schema:
+            type: string
+            example: "fffda7e9-0ea2-4c35-bba0-4496f3af935d"
+        - name: "{column}__exact"
+          in: query
+          required: false
+          description: Filtre exact sur une colonne (ex: ?rpps__exact=11111111111)
+          schema:
+            type: string
+        - name: "{column}__contains"
+          in: query
+          required: false
+          description: Filtre partiel sur une colonne (ex: ?nom__contains=Dupont)
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          description: Numéro de page (défaut : 1)
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: page_size
+          in: query
+          required: false
+          description: Nombre de lignes par page (défaut : 20, max : 100)
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Données structurées en format tabulaire
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TabularResponse"
+              examples:
+                personne-activite:
+                  summary: Données personne-activite filtrées par RPPS
+                  value:
+                    data:
+                      - rpps: "11111111111"
+                        nom_exercice: "DUPONT"
+                        prenom_exercice: "Jean"
+                        code_profession: "10"
+                        libelle_profession: "Médecin"
+                        mode_exercice: "L"
+                        libelle_mode_exercice: "Libéral"
+                        code_secteur: "1"
+                        libelle_secteur: "Secteur 1"
+                    links:
+                      next: null
+                      prev: null
+                    meta:
+                      total: 1
+                      page: 1
+                      page_size: 20
+        "400":
+          description: Paramètres invalides (ressource introuvable, filtre mal formé)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Resource not found"
+        "404":
+          description: Ressource inexistante
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "429":
+          description: Limite de requêtes dépassée
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+# ─────────────────────────────────────────────────────────────
+# COMPONENTS (Schemas)
+# ─────────────────────────────────────────────────────────────
+
+components:
+  schemas:
+    # ──── FHIR Base Types ────
+
+    FhirIdentifier:
+      type: object
+      description: Identifiant d'une ressource FHIR
+      properties:
+        system:
+          type: string
+          description: Système d'identification (ex: https://rpps.esante.gouv.fr)
+          example: "https://rpps.esante.gouv.fr"
+        value:
+          type: string
+          description: Valeur de l'identifiant
+          example: "11111111111"
+        type:
+          type: object
+          properties:
+            coding:
+              type: array
+              items:
+                type: object
+                properties:
+                  system:
+                    type: string
+                  code:
+                    type: string
+                  display:
+                    type: string
+
+    FhirCoding:
+      type: object
+      properties:
+        system:
+          type: string
+          example: "http://snomed.info/sct"
+        code:
+          type: string
+          example: "309343006"
+        display:
+          type: string
+          example: "Physician"
+
+    FhirCodeableConcept:
+      type: object
+      properties:
+        coding:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirCoding"
+        text:
+          type: string
+
+    FhirHumanName:
+      type: object
+      description: Nom d'une personne en FHIR
+      properties:
+        use:
+          type: string
+          enum: [usual, official, temp, nickname, anonymous, old, maiden]
+          example: "official"
+        family:
+          type: string
+          description: Nom de famille
+          example: "Dupont"
+        given:
+          type: array
+          items:
+            type: string
+          description: Prénoms
+          example: ["Jean", "Paul"]
+        prefix:
+          type: array
+          items:
+            type: string
+          description: Titres (Pr., Dr., etc.)
+        suffix:
+          type: array
+          items:
+            type: string
+
+    FhirTelecom:
+      type: object
+      description: Coordonnées de contact (téléphone, email, etc.)
+      properties:
+        system:
+          type: string
+          enum: [phone, fax, email, pager, url, sms, other]
+          example: "phone"
+        value:
+          type: string
+          example: "0123456789"
+        use:
+          type: string
+          enum: [home, work, temp, old, mobile]
+          example: "work"
+
+    FhirReference:
+      type: object
+      description: Référence à une autre ressource FHIR
+      properties:
+        reference:
+          type: string
+          example: "Practitioner/id-123"
+        display:
+          type: string
+          example: "Jean Dupont"
+
+    FhirQualification:
+      type: object
+      description: Qualification professionnelle
+      properties:
+        identifier:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirIdentifier"
+        code:
+          $ref: "#/components/schemas/FhirCodeableConcept"
+        issuer:
+          $ref: "#/components/schemas/FhirReference"
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date
+            end:
+              type: string
+              format: date
+
+    # ──── FHIR Practitioner ────
+
+    FhirPractitioner:
+      type: object
+      description: Praticien professionnel (médecin, dentiste, infirmier, etc.)
+      required:
+        - resourceType
+        - id
+      properties:
+        resourceType:
+          type: string
+          enum: [Practitioner]
+        id:
+          type: string
+          description: Identifiant unique de la ressource FHIR
+        identifier:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirIdentifier"
+          description: Identifiants (RPPS, ADELI, etc.)
+        active:
+          type: boolean
+          description: Le praticien est actif
+          example: true
+        name:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirHumanName"
+          description: Noms du praticien (civil, exercice, etc.)
+        telecom:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirTelecom"
+          description: Coordonnées de contact
+        qualification:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirQualification"
+          description: Qualifications et diplômes
+
+    # ──── FHIR PractitionerRole ────
+
+    FhirPractitionerRole:
+      type: object
+      description: Rôle professionnel d'un praticien dans une structure
+      required:
+        - resourceType
+        - id
+      properties:
+        resourceType:
+          type: string
+          enum: [PractitionerRole]
+        id:
+          type: string
+        practitioner:
+          $ref: "#/components/schemas/FhirReference"
+          description: Référence au praticien (Practitioner resource)
+        organization:
+          $ref: "#/components/schemas/FhirReference"
+          description: Référence à la structure/organisation
+        code:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirCodeableConcept"
+          description: Rôles professionnels (Médecin généraliste, Chirurgien, etc.)
+        specialty:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirCodeableConcept"
+          description: Spécialités (Cardiologie, Chirurgie, etc.)
+        location:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirReference"
+          description: Lieux de pratique
+        telecom:
+          type: array
+          items:
+            $ref: "#/components/schemas/FhirTelecom"
+          description: Coordonnées professionnelles
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+          description: Période de validité du rôle
+        availableTime:
+          type: array
+          items:
+            type: object
+            properties:
+              daysOfWeek:
+                type: array
+                items:
+                  type: string
+                  enum: [mon, tue, wed, thu, fri, sat, sun]
+              availableStartTime:
+                type: string
+                format: time
+              availableEndTime:
+                type: string
+                format: time
+
+    # ──── FHIR Bundle ────
+
+    FhirBundle_Practitioner:
+      type: object
+      description: Bundle FHIR contenant des ressources Practitioner
+      required:
+        - resourceType
+        - type
+      properties:
+        resourceType:
+          type: string
+          enum: [Bundle]
+        type:
+          type: string
+          enum: [searchset]
+        total:
+          type: integer
+          description: Nombre total de résultats
+          example: 1
+        entry:
+          type: array
+          items:
+            type: object
+            properties:
+              fullUrl:
+                type: string
+                example: "https://gateway.api.esante.gouv.fr/fhir/v2/Practitioner/id-123"
+              resource:
+                $ref: "#/components/schemas/FhirPractitioner"
+        link:
+          type: array
+          items:
+            type: object
+            properties:
+              relation:
+                type: string
+                enum: [self, first, previous, next, last]
+              url:
+                type: string
+
+    FhirBundle_PractitionerRole:
+      type: object
+      description: Bundle FHIR contenant des ressources PractitionerRole
+      required:
+        - resourceType
+        - type
+      properties:
+        resourceType:
+          type: string
+          enum: [Bundle]
+        type:
+          type: string
+          enum: [searchset]
+        total:
+          type: integer
+          example: 2
+        entry:
+          type: array
+          items:
+            type: object
+            properties:
+              fullUrl:
+                type: string
+              resource:
+                $ref: "#/components/schemas/FhirPractitionerRole"
+        link:
+          type: array
+          items:
+            type: object
+            properties:
+              relation:
+                type: string
+              url:
+                type: string
+
+    # ──── FHIR OperationOutcome ────
+
+    FhirOperationOutcome:
+      type: object
+      description: Réponse d'erreur standard FHIR
+      required:
+        - resourceType
+        - issue
+      properties:
+        resourceType:
+          type: string
+          enum: [OperationOutcome]
+        issue:
+          type: array
+          items:
+            type: object
+            required:
+              - severity
+              - code
+            properties:
+              severity:
+                type: string
+                enum: [fatal, error, warning, information]
+              code:
+                type: string
+                example: "invalid"
+              details:
+                type: object
+                properties:
+                  coding:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FhirCoding"
+              diagnostics:
+                type: string
+                example: "Invalid parameter: identifier"
+
+    # ──── Tabular Response ────
+
+    CodeLabel:
+      type: object
+      description: Paire code + libellé utilisée partout dans les données RPPS
+      required:
+        - code
+        - libelle
+      properties:
+        code:
+          type: string
+          example: "10"
+        libelle:
+          type: string
+          example: "Médecin"
+
+    TabularRow:
+      type: object
+      description: Ligne de données structurées (structure variable selon la ressource)
+      additionalProperties:
+        oneOf:
+          - type: string
+          - type: number
+          - type: boolean
+          - type: "null"
+      example:
+        rpps: "11111111111"
+        nom_exercice: "DUPONT"
+        prenom_exercice: "Jean"
+        code_profession: "10"
+        libelle_profession: "Médecin"
+
+    TabularResponse:
+      type: object
+      description: Réponse de l'API Tabular data.gouv.fr
+      required:
+        - data
+        - links
+        - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TabularRow"
+          description: Lignes de données retournées
+        links:
+          type: object
+          description: Liens de pagination
+          properties:
+            next:
+              type: string
+              nullable: true
+              description: URL vers la page suivante
+              example: "https://tabular-api.data.gouv.fr/api/resources/fffda7e9-0ea2-4c35-bba0-4496f3af935d/data/?page=2&page_size=20"
+            prev:
+              type: string
+              nullable: true
+              description: URL vers la page précédente
+        meta:
+          type: object
+          description: Métadonnées de la réponse
+          required:
+            - total
+            - page
+            - page_size
+          properties:
+            total:
+              type: integer
+              description: Nombre total de lignes disponibles
+              example: 42
+            page:
+              type: integer
+              description: Numéro de page courant
+              example: 1
+            page_size:
+              type: integer
+              description: Nombre de lignes par page
+              example: 20
+
+    # ──── SDK Types (pour référence) ────
+
+    RppsFullProfile:
+      type: object
+      description: Profil complet d'un praticien retourné par le SDK RPPS
+      required:
+        - rpps
+        - identificationNationale
+        - identite
+        - profession
+      properties:
+        rpps:
+          type: string
+          description: Numéro RPPS (11 chiffres)
+          example: "11111111111"
+        identificationNationale:
+          type: string
+          description: Préfixe type + RPPS
+          example: "81111111111"
+        identite:
+          type: object
+          properties:
+            civilite:
+              $ref: "#/components/schemas/CodeLabel"
+            civiliteExercice:
+              $ref: "#/components/schemas/CodeLabel"
+            nomExercice:
+              type: string
+            prenomExercice:
+              type: string
+        profession:
+          type: object
+          properties:
+            code:
+              type: string
+            libelle:
+              type: string
+            categorie:
+              $ref: "#/components/schemas/CodeLabel"
+        activites:
+          type: array
+          items:
+            type: object
+        diplomesEtAutorisations:
+          type: array
+          items:
+            type: object
+        savoirFaire:
+          type: array
+          items:
+            type: object
+        cartesCps:
+          type: array
+          items:
+            type: object
+        messageriesMssante:
+          type: array
+          items:
+            type: object
+        fhir:
+          type: object
+          properties:
+            practitioner:
+              $ref: "#/components/schemas/FhirPractitioner"
+            practitionerRoles:
+              type: array
+              items:
+                $ref: "#/components/schemas/FhirPractitionerRole"
+        metadata:
+          type: object
+          properties:
+            sources:
+              type: array
+              items:
+                type: object
+                properties:
+                  source:
+                    type: string
+                    enum:
+                      - fhir
+                      - personne-activite
+                      - diplomes
+                      - savoir-faire
+                      - carte-cps
+                      - mssante
+                  success:
+                    type: boolean
+                  rowCount:
+                    type: integer
+                  durationMs:
+                    type: integer
+                  error:
+                    type: string
+                    nullable: true
+            queriedAt:
+              type: string
+              format: date-time
+            totalDurationMs:
+              type: integer
+
+    RppsSearchResult:
+      type: object
+      description: Résumé d'un praticien trouvé par recherche
+      properties:
+        rpps:
+          type: string
+        identificationNationale:
+          type: string
+        civilite:
+          type: string
+        nomExercice:
+          type: string
+        prenomExercice:
+          type: string
+        profession:
+          $ref: "#/components/schemas/CodeLabel"
+        categorieProfessionnelle:
+          $ref: "#/components/schemas/CodeLabel"
+        modeExercice:
+          $ref: "#/components/schemas/CodeLabel"
+        savoirFaire:
+          $ref: "#/components/schemas/CodeLabel"
+        structure:
+          type: object
+          properties:
+            raisonSociale:
+              type: string
+            codePostal:
+              type: string
+            libelleCommune:
+              type: string
+            departement:
+              type: string
+
+    RppsSearchResponse:
+      type: object
+      description: Réponse paginée de recherche du SDK RPPS
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RppsSearchResult"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        durationMs:
+          type: integer
+        criteria:
+          type: object
+          properties:
+            nom:
+              type: string
+            prenom:
+              type: string
+            codePostal:
+              type: string
+
+  # ──── Security Schemes ────
+
+  securitySchemes:
+    esanteApiKey:
+      type: apiKey
+      name: ESANTE-API-KEY
+      in: header
+      description: |
+        Clé API pour l'authentification auprès de l'API FHIR Annuaire Santé.
+        Obtenue via le portail Gravitee : https://portal.api.esante.gouv.fr
+
+        Sans cette clé, la source FHIR sera automatiquement désactivée et seules
+        les données Tabular seront disponibles.
+
+# ─────────────────────────────────────────────────────────────
+# SECURITY
+# ─────────────────────────────────────────────────────────────
+
+security:
+  - esanteApiKey: []
+
+# ─────────────────────────────────────────────────────────────
+# INFO SUPPLÉMENTAIRE
+# ─────────────────────────────────────────────────────────────
+
+x-sdk-info:
+  name: @qrcommunication/rppsapi
+  description: |
+    SDK TypeScript pour interroger les données RPPS et Annuaire Santé.
+
+    Agrège automatiquement les données provenant de :
+    1. **API FHIR Annuaire Santé** (esante.gouv.fr) — données consolidées
+    2. **API Tabular data.gouv.fr** — données complémentaires structurées
+
+    Fournit une interface unifiée et fortement typée pour accéder à :
+    - Identité et profession des praticiens
+    - Activités et structures d'exercice
+    - Diplômes et autorisations
+    - Savoir-faire et compétences
+    - Cartes CPS / CPF
+    - Adresses MSSanté
+    - Métadonnées sur les sources interrogées
+
+  resources:
+    tabular:
+      description: |
+        **Ressources Tabular data.gouv.fr utilisées** :
+
+        | ID Ressource | Description | Colonnes principales |
+        |---|---|---|
+        | `fffda7e9-0ea2-4c35-bba0-4496f3af935d` | Personne + Activité | `rpps`, `nom_exercice`, `prenom_exercice`, `code_profession`, `mode_exercice`, `code_secteur`, `structure_siret` |
+        | `41ae70ac-90c8-4c4e-8644-4ef1b100f045` | Diplômes & Autorisations | `rpps`, `type_diplome`, `diplome`, `type_autorisation`, `discipline_autorisation` |
+        | `fb55f15f-bd61-4402-b551-51ef387f2fab` | Savoir-faire | `rpps`, `profession`, `categorie_professionnelle`, `type_savoir_faire`, `savoir_faire` |
+        | `210eb05e-564b-42be-994a-d1800b63e9b7` | Cartes CPS / CPF | `rpps`, `type_carte`, `numero_carte`, `identifiant_national_carte`, `date_debut_validite`, `date_fin_validite` |
+        | `afe01105-d9a1-41fe-921f-e40ea48b2ba6` | Messagerie MSSanté | `rpps`, `type_bal`, `adresse_bal`, `structure_raison_sociale`, `structure_code_postal` |
+
+      base_url: "https://tabular-api.data.gouv.fr/api/resources"
+
+    fhir:
+      description: |
+        **API FHIR Annuaire Santé** :
+
+        Fournit les données structurées et consolidées des professionnels de santé
+        en format FHIR (Fast Healthcare Interoperability Resources).
+
+        Authentification requise via clé API ESANTE-API-KEY.
+
+      base_url: "https://gateway.api.esante.gouv.fr/fhir/v2"
+      portal_url: "https://portal.api.esante.gouv.fr"
+      auth_required: true
+
+  examples:
+    search_practitioner_by_rpps:
+      description: Rechercher un praticien par son numéro RPPS via FHIR
+      method: GET
+      url: "https://gateway.api.esante.gouv.fr/fhir/v2/Practitioner?identifier=11111111111"
+      headers:
+        ESANTE-API-KEY: "your-api-key"
+      response_status: 200
+
+    search_names:
+      description: Rechercher par nom et prénom
+      method: GET
+      url: "https://gateway.api.esante.gouv.fr/fhir/v2/Practitioner?family=Dupont&given=Jean&_count=10"
+      headers:
+        ESANTE-API-KEY: "your-api-key"
+
+    query_tabular_personne_activite:
+      description: Récupérer données personne-activité filtrées par RPPS (Tabular API)
+      method: GET
+      url: "https://tabular-api.data.gouv.fr/api/resources/fffda7e9-0ea2-4c35-bba0-4496f3af935d/data/?rpps__exact=11111111111&page_size=20"
+      response_status: 200
+
+    search_partial_name:
+      description: Rechercher par nom partiel dans Tabular API
+      method: GET
+      url: "https://tabular-api.data.gouv.fr/api/resources/fffda7e9-0ea2-4c35-bba0-4496f3af935d/data/?nom_exercice__contains=Dupont&page_size=50"
