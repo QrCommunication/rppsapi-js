@@ -1,6 +1,6 @@
 {
   "name": "@qrcommunication/rppsapi",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "SDK pour interroger toutes les sources de données RPPS (Répertoire Partagé des Professionnels de Santé) de l'Annuaire Santé - ANS",
   "type": "module",
   "main": "dist/index.js",
