@@ -158,6 +158,7 @@ jobs:
           EXPECTED_PACKAGE: ${{ steps.archive.outputs.expected }}
         run: |
           node --input-type=module <<'NODE'
+          import { waitForPublicVersion } from './scripts/wait-for-public-version.mjs';
           import assert from 'node:assert/strict';
           import { execFileSync } from 'node:child_process';
           import { createHash, X509Certificate } from 'node:crypto';
@@ -271,11 +272,7 @@ jobs:
             console.log('Matching commit, public archive and cryptographically verified provenance already published; skipping npm publish.');
           } else {
             execFileSync('npm', ['publish', expected.archive, '--ignore-scripts', '--access', 'public', '--provenance', '--registry=https://registry.npmjs.org'], { stdio: 'inherit' });
-            let published = null;
-            for (let attempt = 0; attempt < 6 && !published; attempt++) {
-              if (attempt) await new Promise(resolve => setTimeout(resolve, 5000));
-              published = await inspect();
-            }
+            const published = await waitForPublicVersion(inspect);
             assert.ok(published, 'Published version is not publicly verifiable');
             console.log('Published archive and provenance verified from the public npm registry.');
           }

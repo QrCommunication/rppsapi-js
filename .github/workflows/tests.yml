@@ -72,6 +72,9 @@ jobs:
       - name: Audit all dependency severities
         run: npm audit --audit-level=info
 
+      - name: Test public propagation waiting policy
+        run: node --test --test-concurrency=1 tests/wait-for-public-version.test.mjs
+
       - name: Test real archive, runtime imports and strict consumer types
         run: npm test
 
