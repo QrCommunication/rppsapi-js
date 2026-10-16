@@ -1,6 +1,6 @@
 {
   "name": "@qrcommunication/rppsapi",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "SDK pour interroger toutes les sources de données RPPS (Répertoire Partagé des Professionnels de Santé) de l'Annuaire Santé - ANS",
   "type": "module",
   "main": "dist/index.js",
@@ -31,8 +31,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "node --test --test-concurrency=1 tests/package-smoke.test.mjs",
+    "test:watch": "node --watch --test --test-concurrency=1 tests/package-smoke.test.mjs",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -62,8 +62,13 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "npm@12.2.0",
+  "overrides": {
+    "@types/node": {
+      "undici-types": "8.12.2"
+    }
   }
 }

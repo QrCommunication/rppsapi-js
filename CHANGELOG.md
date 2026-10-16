@@ -4,6 +4,17 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.1.6] - 2026-10-16
+
+### Modifié
+
+- TypeScript 7.0.2 et types Node.js 26.6.5 épinglés, avec npm 12.2.0 et déclarations Undici 8.12.2.
+- Suppression de Vitest inutilisé et remplacement par le runner Node natif : tests d’une vraie archive npm installée sans dépendances de développement, de ses imports ESM et de ses déclarations TypeScript strictes, sans appel aux API métier.
+- Réduction du verrou à 23 résolutions aux dernières versions stables vérifiées ; graphe complet, audit toutes gravités, build, contrôle des types et trois tests du paquet validés localement.
+- CI séparant la recette d’outillage sous Node 22/24/26 et les consommateurs du paquet sous Node 18/20/22/24/26, avec conservation de l’archive exacte lors du changement de runtime.
+- Livraison conditionnée aux matrices de tests, à un tag stable cohérent avec le manifeste et le verrou, à la présence de son commit dans main et à une entrée de changelog unique et non vide.
+- Publication du tarball testé avec `gitHead` dérivé du commit et provenance OIDC obligatoire ; une version publique existante doit correspondre au commit, au SRI et aux octets attendus avant réutilisation. Création de la GitHub Release après vérification de la publication npm.
+
 ## [1.0.1] - 2026-03-18
 
 ### Corrige

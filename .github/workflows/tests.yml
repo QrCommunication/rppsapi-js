@@ -2,50 +2,150 @@ name: Tests
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  lint:
-    name: Lint & Type Check
+  tooling:
+    name: Build, types and package tests (Node ${{ matrix.node-version }})
     runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run type check
-        run: npm run lint
-
-  test:
-    name: Test (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        node-version: [22, 24, 26]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Setup tooling runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          package-manager-cache: false
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Pin npm
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
 
-      - name: Build
+      - name: Validate manifest and lock coherence
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          const root = lock.packages?.[''];
+          assert.equal(lock.lockfileVersion, 3);
+          assert.ok(root, 'Lock must include the root package');
+          for (const field of ['name', 'version']) {
+            assert.equal(lock[field], manifest[field], `Lock ${field} differs`);
+            assert.equal(root[field], manifest[field], `Lock root ${field} differs`);
+          }
+          for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'engines']) {
+            assert.deepEqual(root[field] ?? {}, manifest[field] ?? {}, `Lock root ${field} differs`);
+          }
+          for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+            assert.deepEqual(manifest[field] ?? {}, {}, 'Offline SDK consumer requires zero production dependencies');
+          }
+          assert.equal(manifest.packageManager, 'npm@12.2.0');
+          NODE
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Build SDK
         run: npm run build
+
+      - name: Typecheck SDK
+        run: npm run lint
+
+      - name: Validate complete installed graph
+        run: npm ls --all
+
+      - name: Audit all dependency severities
+        run: npm audit --audit-level=info
+
+      - name: Test real archive, runtime imports and strict consumer types
+        run: npm test
+
+  consumers:
+    name: Archive runtime only (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22, 24, 26]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup archive build runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          package-manager-cache: false
+
+      - name: Pin build npm
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+
+      - name: Install build dependencies under Node 26
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Build SDK under Node 26
+        run: npm run build
+
+      - name: Pack immutable consumer archive
+        id: package
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+          import { basename, join } from 'node:path';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          assert.equal(manifest.name, '@qrcommunication/rppsapi');
+          const packed = JSON.parse(execFileSync('npm', [
+            'pack', '--ignore-scripts', '--offline', '--json', '--pack-destination', process.env.RUNNER_TEMP,
+          ], { encoding: 'utf8' }));
+          assert.ok(packed !== null && typeof packed === 'object' && !Array.isArray(packed), 'Expected the npm 12 pack map');
+          assert.deepEqual(Object.keys(packed), [manifest.name], 'Expected one exact package record');
+          const record = packed[manifest.name];
+          assert.ok(record !== null && typeof record === 'object' && !Array.isArray(record));
+          assert.equal(record.name, manifest.name);
+          assert.equal(record.version, manifest.version);
+          assert.equal(record.id, `${manifest.name}@${manifest.version}`);
+          assert.equal(record.filename, `qrcommunication-rppsapi-${manifest.version}.tgz`);
+          assert.equal(basename(record.filename), record.filename);
+          const archive = join(process.env.RUNNER_TEMP, record.filename);
+          const bytes = readFileSync(archive);
+          assert.equal(record.integrity, 'sha512-' + createHash('sha512').update(bytes).digest('base64'), 'Pack SRI must match archive bytes');
+          const digest = createHash('sha256').update(bytes).digest('hex');
+          writeFileSync(join(process.env.RUNNER_TEMP, 'rppsapi-archive.sha256'), `${digest}  ${archive}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `archive=${archive}\n`);
+          NODE
+
+      - name: Setup consumer runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+
+      - name: Verify same archive bytes
+        run: sha256sum --check "$RUNNER_TEMP/rppsapi-archive.sha256"
+
+      - name: Import archive in a clean consumer without dev dependencies or API calls
+        env:
+          RPPS_SMOKE_TARBALL: ${{ steps.package.outputs.archive }}
+          RPPS_SMOKE_RUNTIME_ONLY: '1'
+        run: node --test --test-concurrency=1 tests/package-smoke.test.mjs

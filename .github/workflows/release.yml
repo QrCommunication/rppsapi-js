@@ -1,75 +1,321 @@
 name: Release
+
 on:
   push:
-    tags:
-    - v*
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rppsapi-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
-    name: Build and Test
-    runs-on: ubuntu-24.04
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '24'
-        cache: npm
-    - name: Install dependencies
-      run: npm ci
-    - name: Run type check
-      run: npm run lint
-    - name: Build
-      run: npm run build
+  checks:
+    name: Complete test matrices
+    uses: ./.github/workflows/tests.yml
+
   publish:
-    name: Publish to npm
-    needs: build
+    name: Verify and publish exact npm archive
+    needs: checks
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      commit: ${{ steps.identity.outputs.commit }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '24'
-        registry-url: https://registry.npmjs.org
-    - name: Install dependencies
-      run: npm ci
-    - name: Build
-      run: npm run build
-    - name: Publish to npm
-      run: npm publish --access public --provenance=false --provenance=false
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup release runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Pin npm
+        run: npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+
+      - name: Fetch main for tagged commit membership
+        run: git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+
+      - name: Validate stable tag, package identity, lock and changelog
+        id: identity
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          const tag = process.env.GITHUB_REF_NAME;
+          assert.equal(process.env.GITHUB_REF_TYPE, 'tag');
+          assert.match(tag, /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+          assert.equal(manifest.name, '@qrcommunication/rppsapi');
+          assert.equal(manifest.version, tag.slice(1));
+          assert.equal(manifest.repository.url, 'git+https://github.com/QrCommunication/rppsapi-js.git');
+          assert.equal(manifest.publishConfig.access, 'public');
+          assert.equal(manifest.packageManager, 'npm@12.2.0');
+          assert.equal(lock.lockfileVersion, 3);
+          for (const field of ['name', 'version']) {
+            assert.equal(lock[field], manifest[field]);
+            assert.equal(lock.packages[''][field], manifest[field]);
+          }
+          for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'engines']) {
+            assert.deepEqual(lock.packages[''][field] ?? {}, manifest[field] ?? {});
+          }
+          for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+            assert.deepEqual(manifest[field] ?? {}, {});
+          }
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const commit = git('rev-parse', 'HEAD');
+          assert.match(commit, /^[a-f0-9]{40}$/);
+          assert.equal(git('rev-parse', `refs/tags/${tag}^{commit}`), commit);
+          execFileSync('git', ['merge-base', '--is-ancestor', commit, 'refs/remotes/origin/main']);
+          const sections = [...readFileSync('CHANGELOG.md', 'utf8').replace(/<!--[\s\S]*?(?:-->|$)/g, '').matchAll(/^## \[([^\]\r\n]+)\][^\r\n]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+          const notes = sections.filter(section => section[1] === manifest.version);
+          assert.equal(notes.length, 1, 'Changelog must contain one exact version entry');
+          assert.ok(notes[0][2].replace(/^\s*#+[^\r\n]*$/gm, '').trim(), 'Changelog entry must contain release content');
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${manifest.version}\ncommit=${commit}\n`);
+          NODE
+
+      - name: Install exact build dependencies
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Build, typecheck, inspect graph and audit all severities
+        run: |
+          npm run build
+          npm run lint
+          npm ls --all
+          npm audit --audit-level=info
+
+      - name: Prepare final archive with derived Git provenance
+        id: archive
+        env:
+          RELEASE_COMMIT: ${{ steps.identity.outputs.commit }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { basename, join } from 'node:path';
+          const directory = join(process.env.RUNNER_TEMP, 'rppsapi-release');
+          mkdirSync(directory, { recursive: false });
+          const packageName = '@qrcommunication/rppsapi';
+          const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          const pack = cwd => {
+            const packed = JSON.parse(execFileSync('npm', [
+              'pack', '--ignore-scripts', '--offline', '--json', '--pack-destination', directory,
+            ], { cwd, encoding: 'utf8' }));
+            assert.ok(packed && typeof packed === 'object' && !Array.isArray(packed), 'npm 12 pack must return a package map');
+            assert.deepEqual(Object.keys(packed), [packageName], 'Expected exactly the SDK package key');
+            const record = packed[packageName];
+            assert.equal(record.name, packageName);
+            assert.equal(record.version, packageVersion);
+            assert.equal(record.filename, basename(record.filename));
+            assert.equal(record.filename, `qrcommunication-rppsapi-${packageVersion}.tgz`);
+            const integrity = 'sha512-' + createHash('sha512').update(readFileSync(join(directory, record.filename))).digest('base64');
+            assert.equal(record.integrity, integrity, 'Native npm pack SRI differs from archive bytes');
+            return record;
+          };
+          const initial = pack(process.cwd());
+          execFileSync('tar', ['-xzf', join(directory, initial.filename), '-C', directory]);
+          const staging = join(directory, 'package');
+          const path = join(staging, 'package.json');
+          const manifest = JSON.parse(readFileSync(path, 'utf8'));
+          assert.match(process.env.RELEASE_COMMIT, /^[a-f0-9]{40}$/);
+          manifest.gitHead = process.env.RELEASE_COMMIT;
+          writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');
+          const final = pack(staging);
+          const archive = join(directory, final.filename);
+          const integrity = 'sha512-' + createHash('sha512').update(readFileSync(archive)).digest('base64');
+          assert.equal(final.integrity, integrity);
+          const metadata = JSON.parse(execFileSync('tar', ['-xOf', archive, 'package/package.json'], { encoding: 'utf8' }));
+          assert.equal(metadata.name, '@qrcommunication/rppsapi');
+          assert.equal(metadata.version, JSON.parse(readFileSync('package.json', 'utf8')).version);
+          assert.equal(metadata.gitHead, process.env.RELEASE_COMMIT);
+          writeFileSync(join(directory, 'expected.json'), JSON.stringify({ archive, integrity, name: metadata.name, version: metadata.version, gitHead: metadata.gitHead }));
+          appendFileSync(process.env.GITHUB_OUTPUT, `archive=${archive}\nexpected=${join(directory, 'expected.json')}\n`);
+          NODE
+
+      - name: Test the exact archive to publish including strict consumer types
+        env:
+          RPPS_SMOKE_TARBALL: ${{ steps.archive.outputs.archive }}
+        run: npm test
+
+      - name: Publish or verify matching existing public version with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          EXPECTED_PACKAGE: ${{ steps.archive.outputs.expected }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { createHash, X509Certificate } from 'node:crypto';
+          import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const expected = JSON.parse(readFileSync(process.env.EXPECTED_PACKAGE, 'utf8'));
+          const sri = bytes => 'sha512-' + createHash('sha512').update(bytes).digest('base64');
+          assert.equal(sri(readFileSync(expected.archive)), expected.integrity, 'Archive changed after smoke');
+          const predicateType = 'https://slsa.dev/provenance/v1';
+          const repository = 'https://github.com/QrCommunication/rppsapi-js';
+          const ref = `refs/tags/v${expected.version}`;
+          const workflowPath = '.github/workflows/release.yml';
+          const officialAttestations = metadata => {
+            assert.equal(metadata?.provenance?.predicateType, predicateType, 'SLSA provenance metadata is required');
+            const url = new URL(metadata.url);
+            assert.equal(url.origin, 'https://registry.npmjs.org');
+            assert.equal(decodeURIComponent(url.pathname), `/-/npm/v1/attestations/${expected.name}@${expected.version}`);
+          };
+          const verifyPublicProvenance = () => {
+            const directory = mkdtempSync(join(process.env.RUNNER_TEMP, 'rppsapi-public-provenance-'));
+            try {
+              mkdirSync(join(directory, 'home'));
+              writeFileSync(join(directory, 'user.npmrc'), '');
+              writeFileSync(join(directory, 'global.npmrc'), '');
+              writeFileSync(join(directory, 'package.json'), JSON.stringify({
+                name: 'rppsapi-public-provenance-consumer', version: '1.0.0', private: true,
+                dependencies: { [expected.name]: expected.version },
+              }));
+              // Public verification never inherits npm credentials, OIDC tokens or repository config.
+              const env = {
+                PATH: process.env.PATH, LANG: 'C.UTF-8', HOME: join(directory, 'home'),
+                npm_config_userconfig: join(directory, 'user.npmrc'),
+                npm_config_globalconfig: join(directory, 'global.npmrc'),
+                npm_config_cache: join(directory, 'cache'),
+              };
+              const npm = args => execFileSync('npm', args, {
+                cwd: directory, env, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024,
+              });
+              npm(['install', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund', '--registry=https://registry.npmjs.org']);
+              const lock = JSON.parse(readFileSync(join(directory, 'package-lock.json'), 'utf8'));
+              const location = `node_modules/${expected.name}`;
+              assert.deepEqual(Object.keys(lock.packages).sort(), ['', location], 'Public consumer must contain only this SDK');
+              assert.equal(lock.packages[location].version, expected.version);
+              assert.equal(lock.packages[location].integrity, expected.integrity, 'Installed public archive SRI differs');
+              assert.equal(lock.packages[location].dev, undefined);
+              const manifest = JSON.parse(readFileSync(join(directory, location, 'package.json'), 'utf8'));
+              assert.equal(manifest.name, expected.name);
+              assert.equal(manifest.version, expected.version);
+              assert.equal(manifest.gitHead, expected.gitHead);
+              for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+                assert.deepEqual(manifest[field] ?? {}, {});
+              }
+              const verified = JSON.parse(npm([
+                'audit', 'signatures', '--json', '--include-attestations', '--omit=dev', '--registry=https://registry.npmjs.org',
+              ]));
+              assert.deepEqual(verified.invalid, []);
+              assert.deepEqual(verified.missing, []);
+              const records = verified.verified?.filter(record => record.name === expected.name && record.version === expected.version);
+              assert.equal(records?.length, 1, 'Native npm must report this package with verified attestations');
+              const record = records[0];
+              assert.equal(record.location, location);
+              assert.equal(new URL(record.registry).origin, 'https://registry.npmjs.org');
+              officialAttestations(record.attestations);
+              const provenance = record.attestationBundles?.filter(attestation => attestation.predicateType === predicateType);
+              assert.equal(provenance?.length, 1, 'Verified SLSA provenance bundle is required');
+              const bundle = provenance[0].bundle;
+              assert.equal(bundle.dsseEnvelope.payloadType, 'application/vnd.in-toto+json');
+              const statement = JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString('utf8'));
+              assert.equal(statement._type, 'https://in-toto.io/Statement/v1');
+              assert.equal(statement.predicateType, predicateType);
+              assert.equal(statement.subject?.length, 1);
+              assert.equal(statement.subject[0].name, `pkg:npm/${expected.name.replace(/^@/, '%40')}@${expected.version}`);
+              assert.equal(statement.subject[0].digest.sha512, Buffer.from(expected.integrity.slice('sha512-'.length), 'base64').toString('hex'));
+              const definition = statement.predicate.buildDefinition;
+              assert.equal(definition.buildType, 'https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1');
+              assert.deepEqual(definition.externalParameters.workflow, { ref, repository, path: workflowPath });
+              assert.deepEqual(definition.resolvedDependencies, [{ uri: `git+${repository}@${ref}`, digest: { gitCommit: expected.gitHead } }]);
+              assert.equal(definition.internalParameters.github.event_name, 'push');
+              assert.equal(statement.predicate.runDetails.builder.id, 'https://github.com/actions/runner/github-hosted');
+              const certificate = bundle.verificationMaterial.certificate?.rawBytes
+                ?? bundle.verificationMaterial.x509CertificateChain?.certificates?.[0]?.rawBytes;
+              assert.ok(certificate, 'Verified keyless signing certificate is required');
+              const identity = new X509Certificate(Buffer.from(certificate, 'base64')).subjectAltName;
+              assert.equal(identity, `URI:${repository}/${workflowPath}@${ref}`, 'Signing certificate workflow identity differs');
+              console.log(JSON.stringify({ verifiedProvenance: `${expected.name}@${expected.version}`, gitHead: expected.gitHead, integrity: expected.integrity, repository, ref, workflowPath, certificateIdentity: identity }));
+            } finally {
+              rmSync(directory, { recursive: true, force: true });
+            }
+          };
+          const endpoint = `https://registry.npmjs.org/${encodeURIComponent(expected.name)}/${expected.version}`;
+          const inspect = async () => {
+            const response = await fetch(endpoint);
+            if (response.status === 404) return null;
+            assert.equal(response.status, 200, `Registry lookup failed: HTTP ${response.status}`);
+            const current = await response.json();
+            assert.equal(current.name, expected.name);
+            assert.equal(current.version, expected.version);
+            assert.equal(current.gitHead, expected.gitHead, 'Existing npm version has a different commit');
+            assert.equal(current.dist?.integrity, expected.integrity, 'Existing npm version has different archive bytes');
+            officialAttestations(current.dist.attestations);
+            const url = new URL(current.dist.tarball);
+            assert.equal(url.protocol, 'https:');
+            assert.equal(url.hostname, 'registry.npmjs.org');
+            const tarball = await fetch(url);
+            assert.equal(tarball.status, 200);
+            assert.equal(sri(Buffer.from(await tarball.arrayBuffer())), expected.integrity, 'Public archive bytes differ');
+            verifyPublicProvenance();
+            return current;
+          };
+          if (await inspect()) {
+            console.log('Matching commit, public archive and cryptographically verified provenance already published; skipping npm publish.');
+          } else {
+            execFileSync('npm', ['publish', expected.archive, '--ignore-scripts', '--access', 'public', '--provenance', '--registry=https://registry.npmjs.org'], { stdio: 'inherit' });
+            let published = null;
+            for (let attempt = 0; attempt < 6 && !published; attempt++) {
+              if (attempt) await new Promise(resolve => setTimeout(resolve, 5000));
+              published = await inspect();
+            }
+            assert.ok(published, 'Published version is not publicly verifiable');
+            console.log('Published archive and provenance verified from the public npm registry.');
+          }
+          NODE
+
   github-release:
-    name: Create GitHub Release
+    name: Create GitHub Release after verified npm publication
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Extract version from tag
-      id: version
-      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-    - name: Extract release notes from CHANGELOG
-      id: changelog
-      env:
-        VERSION: ${{ steps.version.outputs.VERSION }}
-      run: |
-        NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
-        if [ -z "$NOTES" ]; then
-          NOTES="Release ${VERSION}"
-        fi
-        echo "$NOTES" > release_notes.md
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        name: v${{ steps.version.outputs.VERSION }}
-        body_path: release_notes.md
-        draft: false
-        prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.commit }}
+          persist-credentials: false
+
+      - name: Extract unique exact changelog entry
+        env:
+          RELEASE_VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const sections = [...readFileSync('CHANGELOG.md', 'utf8').replace(/<!--[\s\S]*?(?:-->|$)/g, '').matchAll(/^## \[([^\]\r\n]+)\][^\r\n]*\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)];
+          const notes = sections.filter(section => section[1] === process.env.RELEASE_VERSION);
+          assert.equal(notes.length, 1);
+          assert.ok(notes[0][2].replace(/^\s*#+[^\r\n]*$/gm, '').trim());
+          writeFileSync(join(process.env.RUNNER_TEMP, 'rppsapi-release-notes.md'), notes[0][2].trim() + '\n');
+          NODE
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          name: v${{ needs.publish.outputs.version }}
+          tag_name: v${{ needs.publish.outputs.version }}
+          target_commitish: ${{ needs.publish.outputs.commit }}
+          body_path: ${{ runner.temp }}/rppsapi-release-notes.md
+          draft: false
+          prerelease: false
